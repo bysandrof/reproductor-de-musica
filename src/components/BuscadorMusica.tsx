@@ -254,7 +254,12 @@ export default function BuscadorMusica({ perfil, onCambiarPerfil }: BuscadorMusi
   }
 
   useEffect(() => {
-    if (!db) return
+    if (!db) {
+      try { setFavoritos(JSON.parse(localStorage.getItem(`sonora:favoritos:${perfil.id}`) ?? '[]') as Favorito[]) } catch { setFavoritos([]) }
+      setCargandoFavoritos(false)
+      setMensajeBiblioteca('Firebase is not configured; likes are saved on this device.')
+      return
+    }
     const favoritosQuery = query(collection(db, 'perfiles', perfil.id, 'favoritos'), orderBy('creado_en', 'desc'))
     return onSnapshot(favoritosQuery, (snapshot) => {
       const canciones = snapshot.docs.map((documento) => ({ id: documento.id, ...(documento.data() as Omit<Favorito, 'id'>) })).filter((favorito) => Boolean(favorito.video_id))
@@ -517,10 +522,17 @@ export default function BuscadorMusica({ perfil, onCambiarPerfil }: BuscadorMusi
   }
 
   async function alternarFavorito(video: Video) {
-    if (!db) return
     const guardado = favoritos.some((favorito) => favorito.video_id === video.id.videoId)
     setGuardandoId(video.id.videoId)
     setMensajeBiblioteca('')
+    if (!db) {
+      const siguientes = guardado ? favoritos.filter((favorito) => favorito.video_id !== video.id.videoId) : [...favoritos, { id: video.id.videoId, video_id: video.id.videoId, titulo: video.snippet.title, canal: video.snippet.channelTitle, miniatura: miniaturaDe(video), creado_en: null, audio_url: video.audioUrl ?? null }]
+      setFavoritos(siguientes)
+      localStorage.setItem(`sonora:favoritos:${perfil.id}`, JSON.stringify(siguientes))
+      setMensajeBiblioteca(guardado ? 'Song removed from your library.' : 'Song saved on this device.')
+      setGuardandoId(null)
+      return
+    }
     try {
       const referencia = doc(db, 'perfiles', perfil.id, 'favoritos', video.id.videoId)
       if (guardado) {
@@ -553,8 +565,14 @@ export default function BuscadorMusica({ perfil, onCambiarPerfil }: BuscadorMusi
   }
 
   async function eliminarFavorito(favorito: Favorito) {
-    if (!db) return
     setGuardandoId(favorito.video_id)
+    if (!db) {
+      const siguientes = favoritos.filter((item) => item.video_id !== favorito.video_id)
+      setFavoritos(siguientes)
+      localStorage.setItem(`sonora:favoritos:${perfil.id}`, JSON.stringify(siguientes))
+      setGuardandoId(null)
+      return
+    }
     try { await deleteDoc(doc(db, 'perfiles', perfil.id, 'favoritos', favorito.id)) }
     finally { setGuardandoId(null) }
   }

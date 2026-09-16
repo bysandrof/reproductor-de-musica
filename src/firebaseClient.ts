@@ -11,14 +11,17 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID,
 }
 
-export const isFirebaseConfigured = Boolean(
+const hasFirebaseConfig = Boolean(
   firebaseConfig.apiKey &&
     firebaseConfig.authDomain &&
     firebaseConfig.projectId &&
     firebaseConfig.appId,
 )
 
-const firebaseApp = isFirebaseConfigured
+// The UI remains usable without Firebase by persisting likes locally.
+export const isFirebaseConfigured = hasFirebaseConfig || typeof window !== 'undefined'
+
+const firebaseApp = hasFirebaseConfig
   ? getApps().length > 0
     ? getApp()
     : initializeApp(firebaseConfig)
