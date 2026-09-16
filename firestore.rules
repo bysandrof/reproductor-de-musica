@@ -12,7 +12,7 @@ service cloud.firestore {
         request.resource.data.video_id == videoId &&
         request.resource.data.titulo is string &&
         request.resource.data.keys().hasOnly([
-          'video_id', 'titulo', 'canal', 'miniatura', 'creado_en'
+          'video_id', 'titulo', 'canal', 'miniatura', 'creado_en', 'audio_url'
         ]);
       allow delete: if perfilPermitido(profileId);
       allow update: if false;
@@ -33,7 +33,7 @@ service cloud.firestore {
           request.resource.data.video_id == videoId &&
           request.resource.data.titulo is string &&
           request.resource.data.keys().hasOnly([
-            'video_id', 'titulo', 'canal', 'miniatura', 'creado_en'
+            'video_id', 'titulo', 'canal', 'miniatura', 'creado_en', 'audio_url'
           ]);
         allow delete: if perfilPermitido(profileId);
       }
