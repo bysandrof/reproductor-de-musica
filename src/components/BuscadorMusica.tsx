@@ -253,9 +253,15 @@ export default function BuscadorMusica({ perfil, onCambiarPerfil }: BuscadorMusi
       try {
         const cacheKey = 'sonora:storage-audio-index'
         const indiceGuardado = sessionStorage.getItem(cacheKey)
-        const rutas = indiceGuardado ? JSON.parse(indiceGuardado) as string[] : (await listAll(ref(storage, 'audio'))).items.map((item) => item.fullPath)
-        if (!indiceGuardado) sessionStorage.setItem(cacheKey, JSON.stringify(rutas))
-        const ruta = rutas.find((item) => new RegExp(`/${video.id.videoId}\\.(mp3|m4a|wav|ogg)$`, 'i').test(`/${item}`))
+        let rutas = indiceGuardado ? JSON.parse(indiceGuardado) as string[] : (await listAll(ref(storage, 'audio'))).items.map((item) => item.fullPath)
+        let ruta = rutas.find((item) => new RegExp(`/${video.id.videoId}\\.(mp3|m4a|wav|ogg)$`, 'i').test(`/${item}`))
+        if (!ruta && indiceGuardado) {
+          rutas = (await listAll(ref(storage, 'audio'))).items.map((item) => item.fullPath)
+          sessionStorage.setItem(cacheKey, JSON.stringify(rutas))
+          ruta = rutas.find((item) => new RegExp(`/${video.id.videoId}\\.(mp3|m4a|wav|ogg)$`, 'i').test(`/${item}`))
+        } else if (!indiceGuardado) {
+          sessionStorage.setItem(cacheKey, JSON.stringify(rutas))
+        }
         if (ruta) {
           const url = await getDownloadURL(ref(storage, ruta))
           const favorito = favoritos.find((item) => item.video_id === video.id.videoId)
