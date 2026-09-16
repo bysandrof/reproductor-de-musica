@@ -1,0 +1,42 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function perfilPermitido(profileId) {
+      return profileId in ['sierra', 'sandro'];
+    }
+
+    match /perfiles/{profileId}/favoritos/{videoId} {
+      allow read: if perfilPermitido(profileId);
+      allow create: if perfilPermitido(profileId) &&
+        request.resource.data.video_id == videoId &&
+        request.resource.data.titulo is string &&
+        request.resource.data.keys().hasOnly([
+          'video_id', 'titulo', 'canal', 'miniatura', 'creado_en'
+        ]);
+      allow delete: if perfilPermitido(profileId);
+      allow update: if false;
+    }
+
+    match /perfiles/{profileId}/playlists/{playlistId} {
+      allow read: if perfilPermitido(profileId);
+      allow create: if perfilPermitido(profileId) &&
+        request.resource.data.nombre is string &&
+        request.resource.data.nombre.size() > 0 &&
+        request.resource.data.nombre.size() <= 60 &&
+        request.resource.data.keys().hasOnly(['nombre', 'creado_en']);
+      allow update, delete: if false;
+
+      match /canciones/{videoId} {
+        allow read: if perfilPermitido(profileId);
+        allow create, update: if perfilPermitido(profileId) &&
+          request.resource.data.video_id == videoId &&
+          request.resource.data.titulo is string &&
+          request.resource.data.keys().hasOnly([
+            'video_id', 'titulo', 'canal', 'miniatura', 'creado_en'
+          ]);
+        allow delete: if perfilPermitido(profileId);
+      }
+    }
+  }
+}
