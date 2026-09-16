@@ -289,6 +289,10 @@ export default function BuscadorMusica({ perfil, onCambiarPerfil }: BuscadorMusi
       const canciones = snapshot.docs.map((documento) => ({ id: documento.id, ...(documento.data() as Omit<Favorito, 'id'>) })).filter((favorito) => Boolean(favorito.video_id))
       setFavoritos(canciones)
       void Promise.all(canciones.filter((cancion) => cancion.audio_url).map((cancion) => cacheAudio(cancion.video_id, cancion.audio_url as string).catch(() => undefined)))
+      void Promise.all(canciones.filter((cancion) => !cancion.audio_url).map(async (cancion) => {
+        const video = await prepararAudio(favoritoComoVideo(cancion))
+        if (video.audioUrl && db) await setDoc(doc(db, 'perfiles', perfil.id, 'favoritos', cancion.id), { audio_url: video.audioUrl }, { merge: true })
+      }))
       setCargandoFavoritos(false)
     }, (error) => {
       setMensajeBiblioteca(`Could not open the library: ${error.message}`)
