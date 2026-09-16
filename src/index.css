@@ -28,6 +28,11 @@ input {
   font: inherit;
 }
 
+/* Allow the library grid item to shrink before truncating long metadata. */
+#biblioteca {
+  min-width: 0;
+}
+
 /* Keep long library metadata inside its flexible row on narrow screens. */
 #biblioteca .group {
   min-width: 0;
