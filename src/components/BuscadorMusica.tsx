@@ -476,11 +476,14 @@ export default function BuscadorMusica({ perfil, onCambiarPerfil }: BuscadorMusi
       setColaReproduccion(nuevaCola)
       setNombreCola(nuevoNombreCola ?? 'Queue')
     }
-    if (videoActual?.id.videoId === video.id.videoId) {
-      alternarReproduccion()
-      return
-    }
-    void prepararAudio(video).then((videoConAudio) => setVideoActual(videoConAudio))
+    void prepararAudio(video).then((videoConAudio) => {
+      if (videoActual?.id.videoId === video.id.videoId) {
+        if (videoConAudio.audioUrl && !videoActual.audioUrl) setVideoActual(videoConAudio)
+        else alternarReproduccion()
+        return
+      }
+      setVideoActual(videoConAudio)
+    })
   }
 
   function seleccionarResultado(video: Video) {
