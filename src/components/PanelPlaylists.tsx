@@ -143,6 +143,7 @@ export default function PanelPlaylists({ perfil, videoActual, onCerrar, onReprod
     let activa: HTMLElement | null = null
     const contenedor = filas[0]?.parentElement
     const listeners = filas.map((fila, indice) => {
+      fila.draggable = false
       fila.dataset.songId = canciones[indice]?.id ?? ''
       fila.classList.add('transition-all', 'duration-300', 'ease-out')
       const iniciar = () => { activa = fila; setArrastrada(indice); fila.classList.add('scale-[95%]', 'opacity-40', 'shadow-2xl') }
@@ -169,10 +170,30 @@ export default function PanelPlaylists({ perfil, videoActual, onCerrar, onReprod
         setArrastrada(null)
         fila.classList.remove('scale-[95%]', 'opacity-40', 'shadow-2xl')
       }
+      const asa = fila.querySelector<HTMLElement>('[aria-label="Drag to reorder"]')
+      const moverPuntero = (event: PointerEvent) => {
+        if (!activa || !contenedor) return
+        const destino = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>('.group')
+        if (!destino || destino === activa || !contenedor.contains(destino)) return
+        const rectangulo = destino.getBoundingClientRect()
+        contenedor.insertBefore(activa, event.clientY < rectangulo.top + rectangulo.height / 2 ? destino : destino.nextSibling)
+      }
+      const soltarPuntero = () => { terminar(); document.removeEventListener('pointermove', moverPuntero); document.removeEventListener('pointerup', soltarPuntero) }
+      const iniciarPuntero = (event: PointerEvent) => {
+        event.preventDefault()
+        activa = fila
+        fila.classList.add('scale-[95%]', 'opacity-40', 'shadow-2xl')
+        document.addEventListener('pointermove', moverPuntero)
+        document.addEventListener('pointerup', soltarPuntero, { once: true })
+      }
+      if (asa) {
+        asa.style.touchAction = 'none'
+        asa.addEventListener('pointerdown', iniciarPuntero)
+      }
       fila.addEventListener('dragstart', iniciar)
       fila.addEventListener('dragover', mover)
       fila.addEventListener('dragend', terminar)
-      return () => { fila.removeEventListener('dragstart', iniciar); fila.removeEventListener('dragover', mover); fila.removeEventListener('dragend', terminar) }
+      return () => { asa?.removeEventListener('pointerdown', iniciarPuntero); document.removeEventListener('pointermove', moverPuntero); document.removeEventListener('pointerup', soltarPuntero); fila.removeEventListener('dragstart', iniciar); fila.removeEventListener('dragover', mover); fila.removeEventListener('dragend', terminar) }
     })
     return () => listeners.forEach((quitar) => quitar())
   }, [canciones, perfil.id, seleccionada])
