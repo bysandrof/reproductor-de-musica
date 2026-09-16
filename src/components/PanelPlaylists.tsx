@@ -13,6 +13,7 @@ import {
 } from 'firebase/firestore'
 import type { Timestamp } from 'firebase/firestore'
 import { db } from '../firebaseClient'
+import { cacheAudio } from '../audioOffline'
 import type { Perfil } from '../perfiles'
 import type { Favorito, Video } from './BuscadorMusica'
 
@@ -66,7 +67,11 @@ export default function PanelPlaylists({ perfil, videoActual, onCerrar, onReprod
     if (!db || !seleccionada) return
     return onSnapshot(
       query(collection(db, 'perfiles', perfil.id, 'playlists', seleccionada, 'canciones'), orderBy('creado_en', 'asc')),
-      (snapshot) => setCanciones(snapshot.docs.map((item) => ({ id: item.id, ...(item.data() as Omit<Favorito, 'id'>) }))),
+      (snapshot) => {
+        const lista = snapshot.docs.map((item) => ({ id: item.id, ...(item.data() as Omit<Favorito, 'id'>) }))
+        setCanciones(lista)
+        void Promise.all(lista.filter((cancion) => cancion.audio_url).map((cancion) => cacheAudio(cancion.video_id, cancion.audio_url as string).catch(() => undefined)))
+      },
       (error) => setMensaje(`Could not open the playlist: ${error.message}`),
     )
   }, [perfil.id, seleccionada])
