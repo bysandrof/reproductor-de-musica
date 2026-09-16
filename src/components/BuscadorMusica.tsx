@@ -549,13 +549,14 @@ export default function BuscadorMusica({ perfil, onCambiarPerfil }: BuscadorMusi
       return
     }
     try {
+      const videoConAudio = await prepararAudio(video)
       const referencia = doc(db, 'perfiles', perfil.id, 'favoritos', video.id.videoId)
       if (guardado) {
         await deleteDoc(referencia)
         setMensajeBiblioteca('Song removed from your library.')
       } else {
-        await setDoc(referencia, { video_id: video.id.videoId, titulo: video.snippet.title, canal: video.snippet.channelTitle, miniatura: miniaturaDe(video) || null, audio_url: video.audioUrl ?? null, creado_en: serverTimestamp() })
-        setMensajeBiblioteca('Song added to your library.')
+        await setDoc(referencia, { video_id: video.id.videoId, titulo: video.snippet.title, canal: video.snippet.channelTitle, miniatura: miniaturaDe(video) || null, audio_url: videoConAudio.audioUrl ?? null, creado_en: serverTimestamp() })
+        setMensajeBiblioteca(videoConAudio.audioUrl ? 'Song added with offline audio.' : 'Song added to your library.')
       }
     } catch (error) {
       setMensajeBiblioteca(error instanceof Error ? `Could not update: ${error.message}` : 'Could not update the library.')
