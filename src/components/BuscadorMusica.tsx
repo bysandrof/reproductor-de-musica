@@ -10,9 +10,8 @@ import {
   serverTimestamp,
   setDoc,
 } from 'firebase/firestore'
-import { getDownloadURL, ref } from 'firebase/storage'
 import type { Timestamp } from 'firebase/firestore'
-import { db, isFirebaseConfigured, storage } from '../firebaseClient'
+import { db, isFirebaseConfigured } from '../firebaseClient'
 import { cacheAudio, getCachedAudio } from '../audioOffline'
 import type { Perfil } from '../perfiles'
 import PanelPlaylists from './PanelPlaylists'
@@ -251,13 +250,7 @@ export default function BuscadorMusica({ perfil, onCambiarPerfil }: BuscadorMusi
     if (video.audioUrl) return video
     const cacheado = await getCachedAudio(video.id.videoId).catch(() => null)
     if (cacheado) return { ...video, audioUrl: cacheado }
-    if (!storage) return video
-    try {
-      const url = await getDownloadURL(ref(storage, `audio/${video.id.videoId}.mp3`))
-      return { ...video, audioUrl: url }
-    } catch {
-      return video
-    }
+    return video
   }
 
   useEffect(() => {
