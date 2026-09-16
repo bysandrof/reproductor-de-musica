@@ -400,24 +400,21 @@ export default function BuscadorMusica({ perfil, onCambiarPerfil }: BuscadorMusi
     setErrorBusqueda('')
 
     try {
-      const consultas = tipo === 'audio'
-        ? [busqueda, `${busqueda} official audio`]
-        : [`${busqueda} official music video`]
-      const lotes = await Promise.all(consultas.map(async (consultaYouTube) => {
+      const cacheKey = `sonora:youtube-search:${tipo}:${busqueda.toLowerCase()}`
+      const cacheGuardada = sessionStorage.getItem(cacheKey)
+      const resultadosCacheados = cacheGuardada ? JSON.parse(cacheGuardada) as Video[] : null
+      const lotes = resultadosCacheados ? [resultadosCacheados] : await (async () => {
         const parametros = new URLSearchParams({
-          part: 'snippet',
-          maxResults: '25',
-          q: consultaYouTube,
-          type: 'video',
-          videoCategoryId: '10',
-          videoEmbeddable: 'true',
-          key: YOUTUBE_API_KEY,
+          part: 'snippet', maxResults: '25', q: tipo === 'audio' ? busqueda : `${busqueda} official music video`,
+          type: 'video', videoCategoryId: '10', videoEmbeddable: 'true', key: YOUTUBE_API_KEY,
         })
         const respuesta = await fetch(`https://www.googleapis.com/youtube/v3/search?${parametros.toString()}`)
         const datos = (await respuesta.json()) as YouTubeSearchResponse
         if (!respuesta.ok) throw new Error(datos.error?.message ?? 'Search is currently unavailable.')
-        return datos.items ?? []
-      }))
+        const elementos = datos.items ?? []
+        sessionStorage.setItem(cacheKey, JSON.stringify(elementos))
+        return [elementos]
+      })()
       const videosUnicos = new Map<string, Video>()
       lotes.flat().forEach((video) => videosUnicos.set(video.id.videoId, video))
       const videos = ordenarPorTipo([...videosUnicos.values()], tipo).slice(0, 24)
