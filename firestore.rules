@@ -6,6 +6,11 @@ service cloud.firestore {
       return profileId in ['sierra', 'sandro'];
     }
 
+    match /catalogo/{videoId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
     match /perfiles/{profileId}/favoritos/{videoId} {
       allow read: if perfilPermitido(profileId);
       allow create: if perfilPermitido(profileId) &&

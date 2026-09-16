@@ -4,14 +4,16 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDoc,
   onSnapshot,
   orderBy,
   query,
   serverTimestamp,
   setDoc,
 } from 'firebase/firestore'
+import { getDownloadURL, ref } from 'firebase/storage'
 import type { Timestamp } from 'firebase/firestore'
-import { db, isFirebaseConfigured } from '../firebaseClient'
+import { db, isFirebaseConfigured, storage } from '../firebaseClient'
 import { cacheAudio, getCachedAudio } from '../audioOffline'
 import type { Perfil } from '../perfiles'
 import PanelPlaylists from './PanelPlaylists'
@@ -250,6 +252,20 @@ export default function BuscadorMusica({ perfil, onCambiarPerfil }: BuscadorMusi
     if (video.audioUrl) return video
     const cacheado = await getCachedAudio(video.id.videoId).catch(() => null)
     if (cacheado) return { ...video, audioUrl: cacheado }
+    if (db && storage) {
+      try {
+        const catalogo = await getDoc(doc(db, 'catalogo', video.id.videoId))
+        const ruta = catalogo.exists() ? (catalogo.data().audio_path as string | undefined) : undefined
+        if (ruta) {
+          const url = await getDownloadURL(ref(storage, ruta))
+          const favorito = favoritos.find((item) => item.video_id === video.id.videoId)
+          if (favorito) await setDoc(doc(db, 'perfiles', perfil.id, 'favoritos', favorito.id), { audio_url: url }, { merge: true })
+          return { ...video, audioUrl: url }
+        }
+      } catch {
+        // A catalog entry or file may not exist yet; fall back to YouTube playback.
+      }
+    }
     return video
   }
 
