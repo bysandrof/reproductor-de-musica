@@ -27,3 +27,20 @@ button,
 input {
   font: inherit;
 }
+
+/* Keep long library metadata inside its flexible row on narrow screens. */
+#biblioteca .group {
+  min-width: 0;
+}
+
+#biblioteca .group > button {
+  min-width: 0;
+  max-width: 100%;
+}
+
+#biblioteca .truncate {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
