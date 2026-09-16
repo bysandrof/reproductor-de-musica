@@ -4,14 +4,13 @@ import {
   collection,
   deleteDoc,
   doc,
-  getDoc,
   onSnapshot,
   orderBy,
   query,
   serverTimestamp,
   setDoc,
 } from 'firebase/firestore'
-import { getDownloadURL, ref } from 'firebase/storage'
+import { getDownloadURL, listAll, ref } from 'firebase/storage'
 import type { Timestamp } from 'firebase/firestore'
 import { db, isFirebaseConfigured, storage } from '../firebaseClient'
 import { cacheAudio, getCachedAudio } from '../audioOffline'
@@ -254,8 +253,11 @@ export default function BuscadorMusica({ perfil, onCambiarPerfil }: BuscadorMusi
     if (cacheado) return { ...video, audioUrl: cacheado }
     if (db && storage) {
       try {
-        const catalogo = await getDoc(doc(db, 'catalogo', video.id.videoId))
-        const ruta = catalogo.exists() ? (catalogo.data().audio_path as string | undefined) : undefined
+        const cacheKey = 'sonora:storage-audio-index'
+        const indiceGuardado = sessionStorage.getItem(cacheKey)
+        const rutas = indiceGuardado ? JSON.parse(indiceGuardado) as string[] : (await listAll(ref(storage, 'audio'))).items.map((item) => item.fullPath)
+        if (!indiceGuardado) sessionStorage.setItem(cacheKey, JSON.stringify(rutas))
+        const ruta = rutas.find((item) => new RegExp(`/${video.id.videoId}\\.(mp3|m4a|wav|ogg)$`, 'i').test(`/${item}`))
         if (ruta) {
           const url = await getDownloadURL(ref(storage, ruta))
           const favorito = favoritos.find((item) => item.video_id === video.id.videoId)
