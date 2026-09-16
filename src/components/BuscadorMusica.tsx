@@ -225,6 +225,7 @@ export default function BuscadorMusica({ perfil, onCambiarPerfil }: BuscadorMusi
   const silenciadoRef = useRef(false)
   const modoBucleRef = useRef<'off' | 'all' | 'one'>('off')
   const videoActualRef = useRef<Video | null>(null)
+  const favoritosRef = useRef<Favorito[]>([])
   const [consulta, setConsulta] = useState('')
   const [resultados, setResultados] = useState<Video[]>([])
   const [videoActual, setVideoActual] = useState<Video | null>(null)
@@ -239,6 +240,7 @@ export default function BuscadorMusica({ perfil, onCambiarPerfil }: BuscadorMusi
   const [modoBucle, setModoBucle] = useState<'off' | 'all' | 'one'>('off')
   const [tipoBusqueda, setTipoBusqueda] = useState<'audio' | 'video'>('audio')
   const [mostrarPlaylists, setMostrarPlaylists] = useState(false)
+  const [mostrarReproductor, setMostrarReproductor] = useState(false)
   const [videoParaPlaylist, setVideoParaPlaylist] = useState<Video | null>(null)
   const [buscando, setBuscando] = useState(false)
   const [guardandoId, setGuardandoId] = useState<string | null>(null)
@@ -287,12 +289,13 @@ export default function BuscadorMusica({ perfil, onCambiarPerfil }: BuscadorMusi
     const favoritosQuery = query(collection(db, 'perfiles', perfil.id, 'favoritos'), orderBy('creado_en', 'desc'))
     return onSnapshot(favoritosQuery, (snapshot) => {
       const canciones = snapshot.docs.map((documento) => ({ id: documento.id, ...(documento.data() as Omit<Favorito, 'id'>) })).filter((favorito) => Boolean(favorito.video_id))
+      canciones.sort((a, b) => ((a as Favorito & { orden?: number }).orden ?? Number.MAX_SAFE_INTEGER) - ((b as Favorito & { orden?: number }).orden ?? Number.MAX_SAFE_INTEGER))
       setFavoritos(canciones)
       void Promise.all(canciones.filter((cancion) => cancion.audio_url).map((cancion) => cacheAudio(cancion.video_id, cancion.audio_url as string).catch(() => undefined)))
       void Promise.all(canciones.filter((cancion) => !cancion.audio_url).map(async (cancion) => {
         const video = await prepararAudio(favoritoComoVideo(cancion))
         if (video.audioUrl && db) await setDoc(doc(db, 'perfiles', perfil.id, 'favoritos', cancion.id), { audio_url: video.audioUrl }, { merge: true })
-      }))
+      })).catch(() => undefined)
       setCargandoFavoritos(false)
     }, (error) => {
       setMensajeBiblioteca(`Could not open the library: ${error.message}`)
@@ -606,6 +609,63 @@ export default function BuscadorMusica({ perfil, onCambiarPerfil }: BuscadorMusi
     finally { setGuardandoId(null) }
   }
 
+  async function guardarOrdenFavoritos(lista: Favorito[]) {
+    if (!db) {
+      localStorage.setItem(`sonora:favoritos:${perfil.id}`, JSON.stringify(lista))
+      return
+    }
+    const firestore = db
+    await Promise.all(lista.map((favorito, orden) => setDoc(doc(firestore, 'perfiles', perfil.id, 'favoritos', favorito.id), { orden }, { merge: true })))
+  }
+
+  useEffect(() => {
+    const filas = Array.from(document.querySelectorAll<HTMLElement>('#biblioteca .group'))
+    let activa: HTMLElement | null = null
+    const contenedor = filas[0]?.parentElement
+    const listeners = filas.map((fila, indice) => {
+      fila.draggable = true
+      fila.dataset.favoriteId = favoritos[indice]?.id ?? ''
+      fila.classList.add('transition-all', 'duration-300', 'ease-out')
+      let asa = fila.querySelector<HTMLElement>('[data-reorder-handle]')
+      if (!asa) {
+        asa = document.createElement('span')
+        asa.dataset.reorderHandle = 'true'
+        asa.textContent = '☰'
+        asa.className = 'cursor-grab select-none text-zinc-500 active:cursor-grabbing'
+        asa.setAttribute('aria-label', 'Drag to reorder')
+        fila.prepend(asa)
+      }
+      const iniciar = () => { activa = fila; fila.classList.add('scale-[95%]', 'opacity-40', 'shadow-xl') }
+      const sobre = (event: DragEvent) => {
+        event.preventDefault()
+        if (activa && activa !== fila && contenedor) {
+          const mitad = fila.getBoundingClientRect().top + fila.getBoundingClientRect().height / 2
+          contenedor.insertBefore(activa, event.clientY < mitad ? fila : fila.nextSibling)
+        }
+      }
+      const terminar = () => {
+        if (activa && contenedor) {
+          const ids = Array.from(contenedor.querySelectorAll<HTMLElement>('.group')).map((item) => item.dataset.favoriteId)
+          const siguiente = ids.map((id) => favoritosRef.current.find((favorito) => favorito.id === id)).filter((favorito): favorito is Favorito => Boolean(favorito))
+          favoritosRef.current = siguiente
+          setFavoritos(siguiente)
+          void guardarOrdenFavoritos(siguiente).catch(() => setMensajeBiblioteca('Could not save the new order.'))
+        }
+        activa = null
+        fila.classList.remove('scale-[95%]', 'opacity-40', 'shadow-xl')
+      }
+      fila.addEventListener('dragstart', iniciar)
+      fila.addEventListener('dragover', sobre)
+      fila.addEventListener('dragend', terminar)
+      return () => { fila.removeEventListener('dragstart', iniciar); fila.removeEventListener('dragover', sobre); fila.removeEventListener('dragend', terminar) }
+    })
+    return () => listeners.forEach((quitar) => quitar())
+  }, [favoritos, perfil.id])
+
+  useEffect(() => {
+    favoritosRef.current = favoritos
+  }, [favoritos])
+
   function abrirPlaylists(video?: Video) {
     setVideoParaPlaylist(video ?? null)
     setMostrarPlaylists(true)
@@ -635,7 +695,9 @@ export default function BuscadorMusica({ perfil, onCambiarPerfil }: BuscadorMusi
           <div className="grid gap-8 xl:grid-cols-[minmax(0,1fr)_340px]">
             <main className="min-w-0">
               {videoActual ? (
-                <section className="overflow-hidden rounded-3xl border border-white/10 bg-zinc-950 shadow-2xl shadow-black/50">
+                <section className={mostrarReproductor ? 'fixed inset-0 z-[60] overflow-y-auto bg-zinc-950 shadow-2xl' : 'pointer-events-none fixed -left-[100vw] top-0 h-px w-px overflow-hidden opacity-0'} role={mostrarReproductor ? 'dialog' : undefined} aria-modal={mostrarReproductor ? 'true' : undefined}>
+                  <div className="mx-auto min-h-full w-full max-w-3xl border-x border-white/10 bg-zinc-950">
+                  <div className="sticky top-0 z-10 flex items-center justify-between border-b border-white/10 bg-zinc-950/95 px-5 py-4 backdrop-blur-xl"><div><p className="text-[10px] font-black uppercase tracking-[0.2em] text-red-500">Now playing</p><p className="mt-1 text-sm font-semibold text-zinc-300">Player, playlists & library</p></div><button type="button" onClick={() => setMostrarReproductor(false)} aria-label="Close player" className="grid size-10 place-items-center rounded-full bg-white/10 text-xl text-zinc-300 hover:bg-white/20">×</button></div>
                   <div className="bg-black p-2 sm:p-3">
                     <div className="aspect-video min-h-[200px] w-full overflow-hidden rounded-2xl bg-black"><div ref={playerHostRef} className={`h-full w-full ${videoActual.audioUrl ? 'hidden' : ''}`} /><div className={`grid h-full place-items-center bg-gradient-to-br from-zinc-900 to-black ${videoActual.audioUrl ? '' : 'hidden'}`}><img src={miniaturaDe(videoActual)} alt="" className="h-full w-full object-cover opacity-80" /><audio ref={audioRef} className="hidden" /></div></div>
                   </div>
@@ -669,6 +731,7 @@ export default function BuscadorMusica({ perfil, onCambiarPerfil }: BuscadorMusi
                         <div className="mt-2 space-y-1">{colaReproduccion.slice(indiceColaActual + 1, indiceColaActual + 4).map((video, desplazamiento) => <button key={`${video.id.videoId}-${desplazamiento}`} type="button" onClick={() => seleccionarVideo(video)} className="flex w-full items-center gap-3 rounded-lg p-2 text-left transition hover:bg-white/[0.06]"><span className="w-5 text-center text-xs text-zinc-600">{indiceColaActual + desplazamiento + 2}</span><img src={miniaturaDe(video)} alt="" className="size-9 rounded object-cover" /><span className="min-w-0"><span className="block truncate text-xs font-semibold text-zinc-200">{video.snippet.title}</span><span className="block truncate text-[10px] text-zinc-600">{video.snippet.channelTitle}</span></span></button>)}</div>
                       </div>}
                   </div>
+                  </div>
                 </section>
               ) : (
                 <section className="relative min-h-[350px] overflow-hidden rounded-2xl border border-white/10 bg-[radial-gradient(circle_at_75%_30%,rgba(220,38,38,0.5),transparent_28%),radial-gradient(circle_at_65%_70%,rgba(147,51,234,0.35),transparent_30%),linear-gradient(135deg,#27272a,#09090b_70%)] p-7 sm:p-10"><div className="relative z-10 flex min-h-[280px] max-w-xl flex-col justify-center"><p className="text-xs font-bold uppercase tracking-[0.25em] text-red-400">Music on YouTube</p><h1 className="mt-4 text-4xl font-black leading-[0.95] tracking-[-0.04em] sm:text-6xl">Find your next song.</h1><p className="mt-5 max-w-md text-sm leading-relaxed text-zinc-300 sm:text-base">Search, play, and control your music with Sonora.</p><button type="button" onClick={() => buscarGenero('Music hits 2026')} className="mt-7 flex w-fit items-center gap-2 rounded-full bg-white px-6 py-3 text-sm font-bold text-black"><PlayIcon /> Explore music</button></div></section>
@@ -694,7 +757,7 @@ export default function BuscadorMusica({ perfil, onCambiarPerfil }: BuscadorMusi
           </div>
         </div>
 
-        {videoActual && <div className="fixed inset-x-0 bottom-0 z-50 border-t border-white/10 bg-[#161616]/95 backdrop-blur-xl lg:left-60"><div className="mx-auto flex h-24 max-w-[1600px] items-center gap-3 px-4 sm:gap-4 sm:px-6 xl:px-8"><img src={miniaturaDe(videoActual)} alt="" className="size-14 rounded-lg object-cover sm:size-16" /><div className="min-w-0 flex-1 sm:max-w-64"><p className="truncate text-sm font-semibold">{videoActual.snippet.title}</p><p className="truncate text-xs text-zinc-500">{videoActual.snippet.channelTitle}</p></div><button type="button" onClick={cambiarModoBucle} title={modoBucle === 'off' ? 'Repeat off' : modoBucle === 'all' ? 'Repeat queue' : 'Repeat one'} aria-label="Change repeat mode" className={`hidden size-9 place-items-center rounded-full sm:grid ${modoBucle === 'off' ? 'text-zinc-500' : 'text-red-500'}`}><RepeatIcon uno={modoBucle === 'one'} /></button><div className="flex items-center"><button type="button" onClick={() => moverVideo(-1)} aria-label="Previous" className="grid size-9 place-items-center"><SkipIcon /></button><button type="button" onClick={alternarReproduccion} aria-label={reproduciendo ? 'Pause' : 'Play'} className="grid size-11 place-items-center rounded-full bg-white text-black">{reproduciendo ? <PauseIcon /> : <PlayIcon />}</button><button type="button" onClick={() => moverVideo(1)} aria-label="Next" className="grid size-9 place-items-center"><SkipIcon siguiente /></button></div><div className="hidden flex-1 items-center gap-2 md:flex"><span className="w-9 text-right text-[10px] text-zinc-500">{formatoTiempo(tiempoActual)}</span><input aria-label="Playback progress" type="range" min="0" max={duracion || 0} value={Math.min(tiempoActual, duracion || 0)} onChange={(event) => cambiarProgreso(Number(event.target.value))} className="h-1 flex-1 accent-red-600" /><span className="w-9 text-[10px] text-zinc-500">{formatoTiempo(duracion)}</span></div><button type="button" onClick={() => abrirPlaylists(videoActual)} aria-label="Add to playlist" className="hidden text-zinc-400 hover:text-white sm:block"><PlaylistIcon /></button><button type="button" onClick={() => void alternarFavorito(videoActual)} aria-label={videoGuardado ? 'Remove from library' : 'Save to library'} className={videoGuardado ? 'text-red-500' : 'text-zinc-400'}><HeartIcon filled={videoGuardado} /></button></div></div>}
+        {videoActual && <div role="button" tabIndex={0} onClick={() => setMostrarReproductor(true)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') setMostrarReproductor(true) }} aria-label="Open player controls" className="fixed inset-x-0 bottom-0 z-50 cursor-pointer border-t border-white/10 bg-[#161616]/95 text-left backdrop-blur-xl lg:left-60"><span className="mx-auto flex h-24 max-w-[1600px] items-center gap-3 px-4 sm:gap-4 sm:px-6 xl:px-8"><img src={miniaturaDe(videoActual)} alt="" className="size-14 rounded-lg object-cover sm:size-16" /><span className="min-w-0 flex-1 sm:max-w-64"><span className="block truncate text-sm font-semibold">{videoActual.snippet.title}</span><span className="block truncate text-xs text-zinc-500">{videoActual.snippet.channelTitle}</span></span><span className="flex items-center" onClick={(event) => event.stopPropagation()}><button type="button" onClick={() => moverVideo(-1)} aria-label="Previous" className="grid size-9 place-items-center"><SkipIcon /></button><button type="button" onClick={alternarReproduccion} aria-label={reproduciendo ? 'Pause' : 'Play'} className="grid size-11 place-items-center rounded-full bg-white text-black">{reproduciendo ? <PauseIcon /> : <PlayIcon />}</button><button type="button" onClick={() => moverVideo(1)} aria-label="Next" className="grid size-9 place-items-center"><SkipIcon siguiente /></button></span><span onClick={(event) => event.stopPropagation()}><button type="button" onClick={() => void alternarFavorito(videoActual)} aria-label={videoGuardado ? 'Remove from library' : 'Save to library'} className={videoGuardado ? 'text-red-500' : 'text-zinc-400'}><HeartIcon filled={videoGuardado} /></button></span></span></div>}
         {mostrarPlaylists && <PanelPlaylists perfil={perfil} videoActual={videoParaPlaylist ?? videoActual} onCerrar={cerrarPlaylists} onReproducirCola={reproducirCola} />}
       </div>
     </div>

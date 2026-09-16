@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import {
   addDoc,
@@ -49,6 +49,8 @@ export default function PanelPlaylists({ perfil, videoActual, onCerrar, onReprod
   const [nombre, setNombre] = useState('')
   const [guardando, setGuardando] = useState(false)
   const [mensaje, setMensaje] = useState('')
+  const [arrastrada, setArrastrada] = useState<number | null>(null)
+  const cancionesRef = useRef<Favorito[]>([])
 
   useEffect(() => {
     if (!db) return
@@ -68,7 +70,9 @@ export default function PanelPlaylists({ perfil, videoActual, onCerrar, onReprod
     return onSnapshot(
       query(collection(db, 'perfiles', perfil.id, 'playlists', seleccionada, 'canciones'), orderBy('creado_en', 'asc')),
       (snapshot) => {
-        const lista = snapshot.docs.map((item) => ({ id: item.id, ...(item.data() as Omit<Favorito, 'id'>) }))
+      const lista = snapshot.docs.map((item, indice) => ({ id: item.id, ...(item.data() as Omit<Favorito, 'id'>), orden: (item.data().orden as number | undefined) ?? indice }))
+      lista.sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0))
+        cancionesRef.current = lista
         setCanciones(lista)
         void Promise.all(lista.filter((cancion) => cancion.audio_url).map((cancion) => cacheAudio(cancion.video_id, cancion.audio_url as string).catch(() => undefined)))
       },
@@ -123,6 +127,56 @@ export default function PanelPlaylists({ perfil, videoActual, onCerrar, onReprod
     await deleteDoc(doc(db, 'perfiles', perfil.id, 'playlists', seleccionada, 'canciones', cancion.id))
   }
 
+  function soltarCancion(_indiceDestino?: number) {
+    setArrastrada(null)
+    void (async () => {
+      const siguiente = cancionesRef.current
+      if (db && seleccionada) {
+        const firestore = db
+        await Promise.all(siguiente.map((cancion, posicion) => setDoc(doc(firestore, 'perfiles', perfil.id, 'playlists', seleccionada, 'canciones', cancion.id), { orden: posicion }, { merge: true })))
+      }
+    })()
+  }
+
+  useEffect(() => {
+    const filas = Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"] .group'))
+    let activa: HTMLElement | null = null
+    const contenedor = filas[0]?.parentElement
+    const listeners = filas.map((fila, indice) => {
+      fila.dataset.songId = canciones[indice]?.id ?? ''
+      fila.classList.add('transition-all', 'duration-300', 'ease-out')
+      const iniciar = () => { activa = fila; setArrastrada(indice); fila.classList.add('scale-[95%]', 'opacity-40', 'shadow-2xl') }
+      const mover = (event: DragEvent) => {
+        event.preventDefault()
+        if (activa && activa !== fila && contenedor) {
+          const mitad = fila.getBoundingClientRect().top + fila.getBoundingClientRect().height / 2
+          contenedor.insertBefore(activa, event.clientY < mitad ? fila : fila.nextSibling)
+        }
+      }
+      const terminar = () => {
+        if (activa && contenedor) {
+          const ids = Array.from(contenedor.querySelectorAll<HTMLElement>('.group')).map((item) => item.dataset.songId)
+          const siguiente = ids.map((id) => cancionesRef.current.find((cancion) => cancion.id === id)).filter((cancion): cancion is Favorito => Boolean(cancion))
+          cancionesRef.current = siguiente
+          setCanciones(siguiente)
+          void (async () => {
+            if (!db || !seleccionada) return
+            const firestore = db
+            await Promise.all(siguiente.map((cancion, orden) => setDoc(doc(firestore, 'perfiles', perfil.id, 'playlists', seleccionada, 'canciones', cancion.id), { orden }, { merge: true })))
+          })()
+        }
+        activa = null
+        setArrastrada(null)
+        fila.classList.remove('scale-[95%]', 'opacity-40', 'shadow-2xl')
+      }
+      fila.addEventListener('dragstart', iniciar)
+      fila.addEventListener('dragover', mover)
+      fila.addEventListener('dragend', terminar)
+      return () => { fila.removeEventListener('dragstart', iniciar); fila.removeEventListener('dragover', mover); fila.removeEventListener('dragend', terminar) }
+    })
+    return () => listeners.forEach((quitar) => quitar())
+  }, [canciones, perfil.id, seleccionada])
+
   function favoritoComoVideo(cancion: Favorito): Video {
     return {
       id: { videoId: cancion.video_id },
@@ -151,7 +205,7 @@ export default function PanelPlaylists({ perfil, videoActual, onCerrar, onReprod
 
         <section className="min-h-80 overflow-y-auto p-5 sm:p-7">
           <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-xs text-zinc-500">{playlists.find((item) => item.id === seleccionada)?.nombre ?? 'Select a playlist'}</p><h3 className="mt-1 text-2xl font-black">{canciones.length} songs</h3></div><div className="flex flex-wrap gap-2"><button type="button" onClick={() => reproducirDesde(0)} disabled={canciones.length === 0} className="flex items-center gap-2 rounded-full bg-red-600 px-4 py-2.5 text-xs font-bold text-white shadow-lg shadow-red-950/30 disabled:opacity-40"><PlayIcon /> Play all</button><button type="button" onClick={() => void agregarActual()} disabled={!seleccionada || !videoActual || guardando} className="flex items-center gap-2 rounded-full bg-white px-4 py-2.5 text-xs font-bold text-black disabled:opacity-40"><PlusIcon /> Add current song</button></div></div>
-          {playlists.length === 0 ? <div className="grid min-h-64 place-items-center text-center"><div><span className="mx-auto grid size-12 place-items-center rounded-full bg-red-600/15 text-red-400"><PlusIcon /></span><p className="mt-4 text-sm font-semibold">Create your first playlist</p><p className="mt-1 max-w-64 text-xs leading-relaxed text-zinc-500">Give it a name on the left, then add the song you selected.</p></div></div> : canciones.length === 0 ? <div className="grid min-h-64 place-items-center text-center"><div><span className="mx-auto grid size-12 place-items-center rounded-full bg-white/10 text-zinc-400"><PlayIcon /></span><p className="mt-4 text-sm font-semibold">This playlist is empty</p><p className="mt-1 text-xs text-zinc-500">Use Add current song to start building it.</p></div></div> : <div className="mt-6 space-y-1">{canciones.map((cancion, indice) => <div key={cancion.id} className="group flex items-center gap-3 rounded-xl p-2 hover:bg-white/[0.06]"><span className="w-5 text-center text-xs text-zinc-600">{indice + 1}</span><button type="button" onClick={() => reproducirDesde(indice)} aria-label={`Play ${cancion.titulo}`} className="size-12 shrink-0 overflow-hidden rounded-lg bg-zinc-800">{cancion.miniatura && <img src={cancion.miniatura} alt="" className="h-full w-full object-cover" />}</button><button type="button" onClick={() => reproducirDesde(indice)} className="min-w-0 flex-1 text-left"><span className="block truncate text-sm font-semibold">{cancion.titulo}</span><span className="block truncate text-xs text-zinc-500">{cancion.canal}</span></button><button type="button" onClick={() => void quitarCancion(cancion)} className="rounded-full px-3 py-1 text-xs text-zinc-500 opacity-0 hover:bg-red-500/10 hover:text-red-400 group-hover:opacity-100 focus:opacity-100">Remove</button></div>)}</div>}
+          {playlists.length === 0 ? <div className="grid min-h-64 place-items-center text-center"><div><span className="mx-auto grid size-12 place-items-center rounded-full bg-red-600/15 text-red-400"><PlusIcon /></span><p className="mt-4 text-sm font-semibold">Create your first playlist</p><p className="mt-1 max-w-64 text-xs leading-relaxed text-zinc-500">Give it a name on the left, then add the song you selected.</p></div></div> : canciones.length === 0 ? <div className="grid min-h-64 place-items-center text-center"><div><span className="mx-auto grid size-12 place-items-center rounded-full bg-white/10 text-zinc-400"><PlayIcon /></span><p className="mt-4 text-sm font-semibold">This playlist is empty</p><p className="mt-1 text-xs text-zinc-500">Use Add current song to start building it.</p></div></div> : <div className="mt-6 space-y-1"><p className="mb-2 text-[10px] text-zinc-500">Arrastra el asa ☰ para cambiar el orden</p>{canciones.map((cancion, indice) => <div key={cancion.id} draggable onDragStart={() => setArrastrada(indice)} onDragOver={(event) => event.preventDefault()} onDrop={() => soltarCancion(indice)} className={`group flex items-center gap-2 rounded-xl p-2 transition hover:bg-white/[0.06] ${arrastrada === indice ? 'opacity-40' : ''}`}><span className="cursor-grab px-1 text-zinc-500" aria-label="Drag to reorder">☰</span><span className="w-5 text-center text-xs text-zinc-600">{indice + 1}</span><button type="button" onClick={() => reproducirDesde(indice)} aria-label={`Play ${cancion.titulo}`} className="size-12 shrink-0 overflow-hidden rounded-lg bg-zinc-800">{cancion.miniatura && <img src={cancion.miniatura} alt="" className="h-full w-full object-cover" />}</button><button type="button" onClick={() => reproducirDesde(indice)} className="min-w-0 flex-1 text-left"><span className="block truncate text-sm font-semibold">{cancion.titulo}</span><span className="block truncate text-xs text-zinc-500">{cancion.canal}</span></button><div className="flex shrink-0"><button type="button" onClick={() => void quitarCancion(cancion)} aria-label={`Remove ${cancion.titulo}`} className="grid size-8 place-items-center rounded-full text-zinc-500 hover:bg-red-500/10 hover:text-red-400">×</button></div></div>)}</div>}
           {mensaje && <p role="status" className="mt-4 rounded-lg bg-white/[0.05] px-3 py-2 text-xs text-zinc-400">{mensaje}</p>}
         </section>
       </div>

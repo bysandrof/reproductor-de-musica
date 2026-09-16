@@ -17,10 +17,15 @@ service cloud.firestore {
         request.resource.data.video_id == videoId &&
         request.resource.data.titulo is string &&
         request.resource.data.keys().hasOnly([
-          'video_id', 'titulo', 'canal', 'miniatura', 'creado_en', 'audio_url'
+          'video_id', 'titulo', 'canal', 'miniatura', 'creado_en', 'audio_url', 'orden'
         ]);
       allow delete: if perfilPermitido(profileId);
-      allow update: if false;
+      allow update: if perfilPermitido(profileId) &&
+        request.resource.data.video_id == videoId &&
+        request.resource.data.titulo is string &&
+        request.resource.data.keys().hasOnly([
+          'video_id', 'titulo', 'canal', 'miniatura', 'creado_en', 'audio_url', 'orden'
+        ]);
     }
 
     match /perfiles/{profileId}/playlists/{playlistId} {
@@ -38,7 +43,7 @@ service cloud.firestore {
           request.resource.data.video_id == videoId &&
           request.resource.data.titulo is string &&
           request.resource.data.keys().hasOnly([
-            'video_id', 'titulo', 'canal', 'miniatura', 'creado_en', 'audio_url'
+          'video_id', 'titulo', 'canal', 'miniatura', 'creado_en', 'audio_url', 'orden'
           ]);
         allow delete: if perfilPermitido(profileId);
       }
