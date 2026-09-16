@@ -249,8 +249,6 @@ export default function BuscadorMusica({ perfil, onCambiarPerfil }: BuscadorMusi
 
   async function prepararAudio(video: Video) {
     if (video.audioUrl) return video
-    const cacheado = await getCachedAudio(video.id.videoId).catch(() => null)
-    if (cacheado) return { ...video, audioUrl: cacheado }
     if (db && storage) {
       try {
         const cacheKey = 'sonora:storage-audio-index'
@@ -268,6 +266,8 @@ export default function BuscadorMusica({ perfil, onCambiarPerfil }: BuscadorMusi
         // A catalog entry or file may not exist yet; fall back to YouTube playback.
       }
     }
+    const cacheado = await getCachedAudio(video.id.videoId).catch(() => null)
+    if (cacheado) return { ...video, audioUrl: cacheado }
     return video
   }
 
@@ -308,7 +308,7 @@ export default function BuscadorMusica({ perfil, onCambiarPerfil }: BuscadorMusi
       audio.ontimeupdate = () => setTiempoActual(audio.currentTime)
       audio.onloadedmetadata = () => setDuracion(audio.duration)
       audio.onended = () => { if (modoBucleRef.current === 'one') { audio.currentTime = 0; void audio.play() } else siguienteRef.current() }
-      void audio.play().catch(() => setErrorBusqueda('Tap play to start the offline song.'))
+      void audio.play().catch(() => setReproduciendo(false))
       return () => { audio.pause(); audio.removeAttribute('src'); audio.load() }
     }
 
