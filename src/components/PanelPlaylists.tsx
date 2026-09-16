@@ -102,6 +102,7 @@ export default function PanelPlaylists({ perfil, videoActual, onCerrar, onReprod
         titulo: videoActual.snippet.title,
         canal: videoActual.snippet.channelTitle,
         miniatura: miniaturaDe(videoActual) || null,
+        audio_url: videoActual.audioUrl ?? null,
         creado_en: serverTimestamp(),
       })
       setMensaje('Song added to the playlist.')

@@ -10,13 +10,16 @@ import {
   serverTimestamp,
   setDoc,
 } from 'firebase/firestore'
+import { getDownloadURL, ref } from 'firebase/storage'
 import type { Timestamp } from 'firebase/firestore'
-import { db, isFirebaseConfigured } from '../firebaseClient'
+import { db, isFirebaseConfigured, storage } from '../firebaseClient'
+import { cacheAudio, getCachedAudio } from '../audioOffline'
 import type { Perfil } from '../perfiles'
 import PanelPlaylists from './PanelPlaylists'
 
 export interface Video {
   id: { videoId: string }
+  audioUrl?: string
   snippet: {
     title: string
     channelTitle: string
@@ -35,6 +38,7 @@ export interface Favorito {
   canal: string | null
   miniatura: string | null
   creado_en: Timestamp | null
+  audio_url?: string | null
 }
 
 interface YouTubeSearchResponse {
@@ -215,8 +219,10 @@ function PlaylistIcon() {
 export default function BuscadorMusica({ perfil, onCambiarPerfil }: BuscadorMusicaProps) {
   const playerHostRef = useRef<HTMLDivElement>(null)
   const playerRef = useRef<YouTubePlayer | null>(null)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
   const siguienteRef = useRef<() => void>(() => undefined)
   const volumenRef = useRef(80)
+  const silenciadoRef = useRef(false)
   const modoBucleRef = useRef<'off' | 'all' | 'one'>('off')
   const videoActualRef = useRef<Video | null>(null)
   const [consulta, setConsulta] = useState('')
@@ -239,12 +245,28 @@ export default function BuscadorMusica({ perfil, onCambiarPerfil }: BuscadorMusi
   const [cargandoFavoritos, setCargandoFavoritos] = useState(isFirebaseConfigured)
   const [errorBusqueda, setErrorBusqueda] = useState('')
   const [mensajeBiblioteca, setMensajeBiblioteca] = useState('')
+  const [descargandoAudio, setDescargandoAudio] = useState(false)
+
+  async function prepararAudio(video: Video) {
+    if (video.audioUrl) return video
+    const cacheado = await getCachedAudio(video.id.videoId).catch(() => null)
+    if (cacheado) return { ...video, audioUrl: cacheado }
+    if (!storage) return video
+    try {
+      const url = await getDownloadURL(ref(storage, `audio/${video.id.videoId}.mp3`))
+      return { ...video, audioUrl: url }
+    } catch {
+      return video
+    }
+  }
 
   useEffect(() => {
     if (!db) return
     const favoritosQuery = query(collection(db, 'perfiles', perfil.id, 'favoritos'), orderBy('creado_en', 'desc'))
     return onSnapshot(favoritosQuery, (snapshot) => {
-      setFavoritos(snapshot.docs.map((documento) => ({ id: documento.id, ...(documento.data() as Omit<Favorito, 'id'>) })).filter((favorito) => Boolean(favorito.video_id)))
+      const canciones = snapshot.docs.map((documento) => ({ id: documento.id, ...(documento.data() as Omit<Favorito, 'id'>) })).filter((favorito) => Boolean(favorito.video_id))
+      setFavoritos(canciones)
+      void Promise.all(canciones.filter((cancion) => cancion.audio_url).map((cancion) => cacheAudio(cancion.video_id, cancion.audio_url as string).catch(() => undefined)))
       setCargandoFavoritos(false)
     }, (error) => {
       setMensajeBiblioteca(`Could not open the library: ${error.message}`)
@@ -255,6 +277,24 @@ export default function BuscadorMusica({ perfil, onCambiarPerfil }: BuscadorMusi
   useEffect(() => {
     if (!videoActual || !playerHostRef.current) return
     let cancelado = false
+
+    if (videoActual.audioUrl) {
+      if (playerRef.current) {
+        playerRef.current.destroy()
+        playerRef.current = null
+      }
+      const audio = audioRef.current
+      if (!audio) return
+      audio.src = videoActual.audioUrl
+      audio.volume = silenciadoRef.current ? 0 : volumenRef.current / 100
+      audio.onplay = () => setReproduciendo(true)
+      audio.onpause = () => setReproduciendo(false)
+      audio.ontimeupdate = () => setTiempoActual(audio.currentTime)
+      audio.onloadedmetadata = () => setDuracion(audio.duration)
+      audio.onended = () => { if (modoBucleRef.current === 'one') { audio.currentTime = 0; void audio.play() } else siguienteRef.current() }
+      void audio.play().catch(() => setErrorBusqueda('Tap play to start the offline song.'))
+      return () => { audio.pause(); audio.removeAttribute('src'); audio.load() }
+    }
 
     void cargarYouTubeApi().then((YT) => {
       if (cancelado || !playerHostRef.current) return
@@ -303,6 +343,12 @@ export default function BuscadorMusica({ perfil, onCambiarPerfil }: BuscadorMusi
   useEffect(() => {
     const interval = window.setInterval(() => {
       const player = playerRef.current
+      const audio = audioRef.current
+      if (audio && videoActualRef.current?.audioUrl) {
+        setTiempoActual(audio.currentTime || 0)
+        setDuracion(audio.duration || 0)
+        return
+      }
       if (!player || typeof player.getCurrentTime !== 'function') return
       setTiempoActual(player.getCurrentTime() || 0)
       setDuracion(player.getDuration() || 0)
@@ -314,16 +360,35 @@ export default function BuscadorMusica({ perfil, onCambiarPerfil }: BuscadorMusi
     return () => {
       if (typeof playerRef.current?.destroy === 'function') playerRef.current.destroy()
       playerRef.current = null
+      audioRef.current?.pause()
     }
   }, [])
 
   useEffect(() => {
     volumenRef.current = volumen
+    silenciadoRef.current = silenciado
     if (!playerRef.current) return
     playerRef.current.setVolume(volumen)
     if (silenciado) playerRef.current.mute()
     else playerRef.current.unMute()
   }, [volumen, silenciado])
+
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.volume = silenciado ? 0 : volumen / 100
+  }, [volumen, silenciado])
+
+  useEffect(() => {
+    if (!videoActual || !('mediaSession' in navigator) || !videoActual.audioUrl) return
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: videoActual.snippet.title,
+      artist: videoActual.snippet.channelTitle,
+      artwork: [{ src: miniaturaDe(videoActual) }],
+    })
+    navigator.mediaSession.setActionHandler('play', () => { void audioRef.current?.play() })
+    navigator.mediaSession.setActionHandler('pause', () => audioRef.current?.pause())
+    navigator.mediaSession.setActionHandler('nexttrack', () => moverVideo(1))
+    navigator.mediaSession.setActionHandler('previoustrack', () => moverVideo(-1))
+  }, [videoActual])
 
   useEffect(() => {
     modoBucleRef.current = modoBucle
@@ -384,7 +449,7 @@ export default function BuscadorMusica({ perfil, onCambiarPerfil }: BuscadorMusi
   }
 
   function favoritoComoVideo(favorito: Favorito): Video {
-    return { id: { videoId: favorito.video_id }, snippet: { title: favorito.titulo, channelTitle: favorito.canal ?? 'Unknown channel', thumbnails: favorito.miniatura ? { high: { url: favorito.miniatura } } : {} } }
+    return { id: { videoId: favorito.video_id }, audioUrl: favorito.audio_url ?? undefined, snippet: { title: favorito.titulo, channelTitle: favorito.canal ?? 'Unknown channel', thumbnails: favorito.miniatura ? { high: { url: favorito.miniatura } } : {} } }
   }
 
   function seleccionarVideo(video: Video, nuevaCola?: Video[], nuevoNombreCola?: string) {
@@ -396,7 +461,7 @@ export default function BuscadorMusica({ perfil, onCambiarPerfil }: BuscadorMusi
       alternarReproduccion()
       return
     }
-    setVideoActual(video)
+    void prepararAudio(video).then((videoConAudio) => setVideoActual(videoConAudio))
   }
 
   function seleccionarResultado(video: Video) {
@@ -417,6 +482,11 @@ export default function BuscadorMusica({ perfil, onCambiarPerfil }: BuscadorMusi
   }
 
   function alternarReproduccion() {
+    if (videoActual?.audioUrl && audioRef.current) {
+      if (audioRef.current.paused) void audioRef.current.play()
+      else audioRef.current.pause()
+      return
+    }
     if (!playerRef.current) return
     if (playerRef.current.getPlayerState() === window.YT?.PlayerState.PLAYING) playerRef.current.pauseVideo()
     else playerRef.current.playVideo()
@@ -444,6 +514,11 @@ export default function BuscadorMusica({ perfil, onCambiarPerfil }: BuscadorMusi
   }
 
   function cambiarProgreso(valor: number) {
+    if (videoActual?.audioUrl && audioRef.current) {
+      audioRef.current.currentTime = valor
+      setTiempoActual(valor)
+      return
+    }
     playerRef.current?.seekTo(valor, true)
     setTiempoActual(valor)
   }
@@ -459,13 +534,28 @@ export default function BuscadorMusica({ perfil, onCambiarPerfil }: BuscadorMusi
         await deleteDoc(referencia)
         setMensajeBiblioteca('Song removed from your library.')
       } else {
-        await setDoc(referencia, { video_id: video.id.videoId, titulo: video.snippet.title, canal: video.snippet.channelTitle, miniatura: miniaturaDe(video) || null, creado_en: serverTimestamp() })
+        await setDoc(referencia, { video_id: video.id.videoId, titulo: video.snippet.title, canal: video.snippet.channelTitle, miniatura: miniaturaDe(video) || null, audio_url: video.audioUrl ?? null, creado_en: serverTimestamp() })
         setMensajeBiblioteca('Song added to your library.')
       }
     } catch (error) {
       setMensajeBiblioteca(error instanceof Error ? `Could not update: ${error.message}` : 'Could not update the library.')
     } finally {
       setGuardandoId(null)
+    }
+  }
+
+  async function descargarAudioActual() {
+    if (!videoActual) return
+    setDescargandoAudio(true)
+    try {
+      const audio = await prepararAudio(videoActual)
+      if (!audio.audioUrl) throw new Error('Upload this song to Firebase Storage first: audio/{videoId}.mp3')
+      await cacheAudio(videoActual.id.videoId, audio.audioUrl)
+      setMensajeBiblioteca('Song downloaded for offline playback.')
+    } catch (error) {
+      setMensajeBiblioteca(error instanceof Error ? error.message : 'Could not download this song.')
+    } finally {
+      setDescargandoAudio(false)
     }
   }
 
@@ -507,12 +597,12 @@ export default function BuscadorMusica({ perfil, onCambiarPerfil }: BuscadorMusi
               {videoActual ? (
                 <section className="overflow-hidden rounded-3xl border border-white/10 bg-zinc-950 shadow-2xl shadow-black/50">
                   <div className="bg-black p-2 sm:p-3">
-                    <div className="aspect-video min-h-[200px] w-full overflow-hidden rounded-2xl bg-black"><div ref={playerHostRef} className="h-full w-full" /></div>
+                    <div className="aspect-video min-h-[200px] w-full overflow-hidden rounded-2xl bg-black"><div ref={playerHostRef} className={`h-full w-full ${videoActual.audioUrl ? 'hidden' : ''}`} /><div className={`grid h-full place-items-center bg-gradient-to-br from-zinc-900 to-black ${videoActual.audioUrl ? '' : 'hidden'}`}><img src={miniaturaDe(videoActual)} alt="" className="h-full w-full object-cover opacity-80" /><audio ref={audioRef} className="hidden" /></div></div>
                   </div>
                   <div className="p-5 sm:p-7">
                       <div className="flex items-start justify-between gap-4">
                         <div className="min-w-0">
-                          <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-red-500">Playing on YouTube</p>
+                          <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-red-500">{videoActual.audioUrl ? 'Offline-ready audio' : 'Playing on YouTube'}</p>
                           <h1 className="mt-2 line-clamp-2 text-xl font-black tracking-tight sm:text-2xl">{videoActual.snippet.title}</h1>
                           <p className="mt-1 truncate text-sm text-zinc-400">{videoActual.snippet.channelTitle}</p>
                           {colaReproduccion.length > 0 && <p className="mt-2 text-[11px] font-medium text-zinc-500">{nombreCola} · {indiceColaActual + 1} of {colaReproduccion.length}</p>}
@@ -531,7 +621,7 @@ export default function BuscadorMusica({ perfil, onCambiarPerfil }: BuscadorMusi
                       </div>
 
                       <div className="mt-4 flex items-center justify-between gap-4 border-t border-white/10 pt-4">
-                        <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-600">YouTube source</span>
+                        <div className="flex items-center gap-3"><span className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-600">{videoActual.audioUrl ? 'Firebase audio' : 'YouTube source'}</span>{videoActual.audioUrl && <button type="button" onClick={() => void descargarAudioActual()} disabled={descargandoAudio} className="rounded-full border border-white/10 px-3 py-1.5 text-[10px] font-bold text-zinc-300 hover:bg-white/10 disabled:opacity-50">{descargandoAudio ? 'Downloading…' : 'Download offline'}</button>}</div>
                         <div className="flex items-center gap-2"><button type="button" onClick={() => setSilenciado((actual) => !actual)} aria-label={silenciado ? 'Unmute' : 'Mute'} className="text-zinc-400 hover:text-white"><VolumeIcon silenciado={silenciado} /></button><input aria-label="Volume" type="range" min="0" max="100" value={silenciado ? 0 : volumen} onChange={(event) => { setVolumen(Number(event.target.value)); setSilenciado(false) }} className="h-1 w-20 accent-white sm:w-24" /></div>
                       </div>
                       {indiceColaActual >= 0 && indiceColaActual < colaReproduccion.length - 1 && <div className="mt-4 border-t border-white/10 pt-4">

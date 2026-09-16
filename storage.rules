@@ -1,0 +1,10 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Audio is uploaded manually from the Firebase Console. The app only reads it.
+    match /audio/{fileName} {
+      allow read: if true;
+      allow write: if false;
+    }
+  }
+}
